@@ -100,7 +100,7 @@ public class CraftingListener implements Listener {
         }
 
         loc.getWorld().dropItem(loc, machineResult.clone());
-        loc.getWorld().spawnParticle(Particle.EXPLOSION_LARGE, loc, 1);
+        loc.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, loc, 1);
         loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_USE, 1.0f, 1.0f);
     }
 }
