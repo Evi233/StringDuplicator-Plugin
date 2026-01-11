@@ -1,0 +1,7 @@
+name: StringDuplicator
+version: '${project.version}'
+main: com.evidence.stringduplicator.StringDuplicator
+api-version: '1.20'
+prefix: StringDuplicator
+authors: [Evidence]
+description: A plugin to duplicate strings with redstone machines.
