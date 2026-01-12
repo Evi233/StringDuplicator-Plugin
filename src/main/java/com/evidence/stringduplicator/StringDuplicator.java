@@ -123,80 +123,51 @@ private void startMachine(Block block) {
                     return;
                 }
 
+                // 1. 环境检测
                 Block above1 = block.getRelative(BlockFace.UP);
-                Block above2 = above1.getRelative(BlockFace.UP);
-                boolean hasString = (above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE);
+                boolean hasString = (above1.getType() == Material.TRIPWIRE || block.getRelative(BlockFace.UP, 2).getType() == Material.TRIPWIRE);
                 boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                boolean success = false;
-                
                 if (hasString && isPowered) {
-                    // 获取最新的 BlockState 并强制转换为 Dispenser
-                    if (block.getState() instanceof Dispenser dispenser) {
-                        Inventory inv = dispenser.getInventory();
+                    // 2. 获取快照
+                    org.bukkit.block.BlockState state = block.getState();
+                    if (state instanceof Dispenser dispenser) {
+                        // 使用 getSnapshotInventory() 明确操作快照
+                        Inventory inv = dispenser.getSnapshotInventory();
                         
-                        // 调试：看看这个容器到底有几个格子
-                        int invSize = inv.getSize();
-                        int beforeCount = countString(inv);
+                        // 调试：打印操作前的 Slot 0
+                        ItemStack beforeItem = inv.getItem(0);
+                        String beforeLog = (beforeItem == null) ? "EMPTY" : beforeItem.getType().name() + "x" + beforeItem.getAmount();
 
-                        // --- 强力注入逻辑开始 ---
-                        for (int i = 0; i < invSize; i++) {
-                            ItemStack item = inv.getItem(i);
-                            
-                            // 情况 A: 格子是空的
-                            if (item == null || item.getType() == Material.AIR) {
-                                inv.setItem(i, new ItemStack(Material.STRING, 1));
-                                success = true;
-                                break;
-                            } 
-                            // 情况 B: 格子已经是线，且没堆叠满
-                            else if (item.getType() == Material.STRING && item.getAmount() < 64) {
-                                item.setAmount(item.getAmount() + 1);
-                                success = true;
-                                break;
-                            }
-                        }
+                        // 3. 强行在 Slot 0 塞入 1 根线（不管原来有什么）
+                        inv.setItem(0, new ItemStack(Material.STRING, 1));
+                        
+                        // 4. 提交修改 (true, true) 强制应用并同步
+                        boolean updateSuccess = dispenser.update(true, true);
+                        
+                        // 调试：打印操作后的 Slot 0
+                        ItemStack afterItem = inv.getItem(0);
+                        String afterLog = (afterItem == null) ? "EMPTY" : afterItem.getType().name() + "x" + afterItem.getAmount();
 
-                        if (success) {
-                            // 关键：提交修改，true 表示强制应用，false 表示不触发物理邻居更新
-                            dispenser.update(true, false);
-                            
-                            int afterCount = countString(inv);
-                            getLogger().info(String.format("[DEBUG] 坐标 %d,%d,%d | 类型: %s | 数量: %d -> %d", 
-                                block.getX(), block.getY(), block.getZ(), inv.getType(), beforeCount, afterCount));
-                        } else {
-                            // 如果循环结束 success 还是 false，说明 9 个格子全满了且全是 64 个
-                            // getLogger().warning("[DEBUG] 刷线失败：所有格子已满！");
-                        }
+                        getLogger().info(String.format("[DEBUG] 坐标 %d,%d,%d | 更新:%b | Slot0: %s -> %s", 
+                            block.getX(), block.getY(), block.getZ(), updateSuccess, beforeLog, afterLog));
+
+                        // 5. 最后的保险：如果背包更新实在玄学，直接在世界上方刷出掉落物
+                        // 这样即使发射器坏了，玩家也能拿到线
+                        // block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 1.2, 0.5), new ItemStack(Material.STRING));
                     }
                 }
 
-                // Action Bar 显示
-                String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
-                String pStr = isPowered ? "§a✔ 电力" : "§c✘ 没电";
-                String sStr = hasString ? "§a✔ 有线" : "§c✘ 没线";
-                String workStr = success ? "§b§l[+1 产出中]" : (isPowered && hasString ? "§6[满/错误]" : "§8[待机]");
-
-                TextComponent msg = new TextComponent(workStr + " " + locStr + " " + pStr + " §8| " + sStr);
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, msg);
+                // Action Bar 依然保持
+                String status = (hasString && isPowered) ? "§b§l[生产中]" : "§7[待机]";
+                String message = status + " §a电:" + isPowered + " §e线:" + hasString;
+                for (Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
+                    p.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(message));
                 }
-            }
-
-            // 修正后的计数方法
-            private int countString(Inventory inv) {
-                int count = 0;
-                for (ItemStack item : inv.getContents()) {
-                    if (item != null && item.getType() == Material.STRING) {
-                        count += item.getAmount();
-                    }
-                }
-                return count;
             }
         }.runTaskTimer(this, 0L, 10L);
         runningTasks.put(block, task);
     }
-
     private void stopMachine(Block block) {
         BukkitTask task = runningTasks.remove(block);
         if (task != null) task.cancel();
