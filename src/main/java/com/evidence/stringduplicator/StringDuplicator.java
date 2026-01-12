@@ -90,7 +90,7 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
             if (block.getState() instanceof TileState state) {
                 state.getPersistentDataContainer().set(MACHINE_KEY, PersistentDataType.BYTE, (byte) 1);
                 state.update();
-                event.getPlayer().sendMessage("§a刷线机已放置！全服玩家均可看到诊断信息。");
+                event.getPlayer().sendMessage("§a刷线机已放置！");
                 startMachine(block);
             }
         }
@@ -134,10 +134,6 @@ private void startMachine(Block block) {
                     if (state instanceof Dispenser dispenser) {
                         // 使用 getSnapshotInventory() 明确操作快照
                         Inventory inv = dispenser.getSnapshotInventory();
-                        
-                        // 调试：打印操作前的 Slot 0
-                        ItemStack beforeItem = inv.getItem(0);
-                        String beforeLog = (beforeItem == null) ? "EMPTY" : beforeItem.getType().name() + "x" + beforeItem.getAmount();
 
                         // 3. 强行在 Slot 0 塞入 1 根线（不管原来有什么）
                         inv.setItem(0, new ItemStack(Material.STRING, 1));
@@ -145,12 +141,6 @@ private void startMachine(Block block) {
                         // 4. 提交修改 (true, true) 强制应用并同步
                         boolean updateSuccess = dispenser.update(true, true);
                         
-                        // 调试：打印操作后的 Slot 0
-                        ItemStack afterItem = inv.getItem(0);
-                        String afterLog = (afterItem == null) ? "EMPTY" : afterItem.getType().name() + "x" + afterItem.getAmount();
-
-                        getLogger().info(String.format("[DEBUG] 坐标 %d,%d,%d | 更新:%b | Slot0: %s -> %s", 
-                            block.getX(), block.getY(), block.getZ(), updateSuccess, beforeLog, afterLog));
 
                         // 5. 最后的保险：如果背包更新实在玄学，直接在世界上方刷出掉落物
                         // 这样即使发射器坏了，玩家也能拿到线
@@ -158,12 +148,6 @@ private void startMachine(Block block) {
                     }
                 }
 
-                // Action Bar 依然保持
-                String status = (hasString && isPowered) ? "§b§l[生产中]" : "§7[待机]";
-                String message = status + " §a电:" + isPowered + " §e线:" + hasString;
-                for (Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
-                    p.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(message));
-                }
             }
         }.runTaskTimer(this, 0L, 10L);
         runningTasks.put(block, task);
