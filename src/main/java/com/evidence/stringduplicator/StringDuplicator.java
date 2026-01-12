@@ -17,6 +17,8 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.block.Dispenser;
+import org.bukkit.inventory.Inventory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -134,12 +136,12 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
 
-                if (above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE) {
-                    // 执行刷线
-                    block.getWorld().dropItemNaturally(
-                        block.getLocation().add(0.5, 1.1, 0.5), 
-                        new ItemStack(Material.STRING)
-                    );
+                if (block.getState() instanceof Dispenser dispenser) {
+                    Inventory inv = dispenser.getInventory();
+                    if (inv.firstEmpty() != -1) {  // 检查是否有空位
+                        inv.addItem(new ItemStack(Material.STRING));
+                        dispenser.update();  // 更新方块状态
+                    }
                 }
             }
         }.runTaskTimer(this, 0L, 10L); // 每0.5秒生成一个
