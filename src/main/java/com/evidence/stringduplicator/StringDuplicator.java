@@ -1,10 +1,13 @@
 package com.evidence.stringduplicator;
 
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.TileState;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
@@ -34,9 +37,9 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         createMachineItem();
-        registerRecipe(); // 注册工作台合成表
+        registerRecipe();
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("String Duplicator enabled! Recipe: 7 Stones + 2 Doors");
+        getLogger().info("String Duplicator (Action Bar Diagnostic) enabled!");
     }
 
     @Override
@@ -61,18 +64,11 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
     }
 
     private void registerRecipe() {
-        // 创建合成表：Key 必须唯一
         NamespacedKey recipeKey = new NamespacedKey(this, "string_duplicator_recipe");
         ShapedRecipe recipe = new ShapedRecipe(recipeKey, machineItemCache);
-
-        // 设定形状 (S=Stone, D=Door)
-        // 第一排 SSS, 第二排 SDS, 第三排 SDS
         recipe.shape("SSS", "SDS", "SDS");
-
-        // 设定原料
         recipe.setIngredient('S', Material.STONE);
-        recipe.setIngredient('D', Material.OAK_DOOR); // 默认用橡木门，Java API限制一个字符对应一种材质
-
+        recipe.setIngredient('D', Material.OAK_DOOR);
         getServer().addRecipe(recipe);
     }
 
@@ -81,43 +77,33 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
         ItemStack item = event.getItemInHand();
         if (item == null || item.getItemMeta() == null) return;
         
-        if (!item.getItemMeta().getPersistentDataContainer().has(MACHINE_KEY, PersistentDataType.BYTE)) {
-            return;
-        }
-        
-        Block block = event.getBlockPlaced();
-        if (block.getState() instanceof TileState state) {
-            state.getPersistentDataContainer().set(MACHINE_KEY, PersistentDataType.BYTE, (byte) 1);
-            state.update();
-            event.getPlayer().sendMessage("§a刷线机已放置！");
+        if (item.getItemMeta().getPersistentDataContainer().has(MACHINE_KEY, PersistentDataType.BYTE)) {
+            Block block = event.getBlockPlaced();
+            if (block.getState() instanceof TileState state) {
+                state.getPersistentDataContainer().set(MACHINE_KEY, PersistentDataType.BYTE, (byte) 1);
+                state.update();
+                event.getPlayer().sendMessage("§a刷线机已放置！靠近机器可查看状态。");
+                
+                // 放置后即便没电也启动一个只显示诊断的任务
+                startMachine(block);
+            }
         }
     }
 
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
-        if (runningTasks.containsKey(event.getBlock())) {
-            runningTasks.get(event.getBlock()).cancel();
-            runningTasks.remove(event.getBlock());
-        }
+        stopMachine(event.getBlock());
     }
 
     @EventHandler
     public void onRedstoneEvent(BlockRedstoneEvent event) {
         Block block = event.getBlock();
         if (block.getType() != Material.DISPENSER) return;
-
-        int newCurrent = event.getNewCurrent();
-        int oldCurrent = event.getOldCurrent();
-        
-        boolean turnedOn = oldCurrent == 0 && newCurrent > 0;
-        boolean turnedOff = oldCurrent > 0 && newCurrent == 0;
-
-        if (!turnedOn && !turnedOff) return;
         if (!(block.getState() instanceof TileState state)) return;
         if (!state.getPersistentDataContainer().has(MACHINE_KEY, PersistentDataType.BYTE)) return;
 
-        if (turnedOn) startMachine(block);
-        else stopMachine(block);
+        // 红石信号改变时尝试触发任务启动
+        startMachine(block);
     }
 
     private void startMachine(Block block) {
@@ -125,26 +111,44 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
 
         BukkitTask task = new BukkitRunnable() {
             @Override
-            // 在 StringDuplicator.java 里的 run() 内部
             public void run() {
                 if (block.getType() != Material.DISPENSER) {
-                    stopMachine(block);
+                    this.cancel();
+                    runningTasks.remove(block);
                     return;
                 }
 
-                // 检查上方第 1 格和第 2 格，只要有线就工作
+                // 1. 物理状态检测
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
+                boolean hasString = above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE;
+                boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                if (block.getState() instanceof Dispenser dispenser) {
-                    Inventory inv = dispenser.getInventory();
-                    if (inv.firstEmpty() != -1) {  // 检查是否有空位
-                        inv.addItem(new ItemStack(Material.STRING));
-                        dispenser.update();  // 更新方块状态
+                // 2. 构造 Action Bar 诊断消息
+                String powerText = isPowered ? "§a✔ 已通电" : "§c✘ 未通电";
+                String stringText = hasString ? "§a✔ 已检测到线" : "§c✘ 未检测到线";
+                String status = isPowered && hasString ? "§b[运行中]" : "§7[待机中]";
+                String message = status + " " + powerText + " §8| " + stringText;
+
+                // 3. 发送给周围 5 格内的玩家
+                for (Player player : block.getWorld().getPlayers()) {
+                    if (player.getLocation().distance(block.getLocation()) <= 5) {
+                        player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(message));
+                    }
+                }
+
+                // 4. 只有在满足条件时才执行刷线逻辑
+                if (hasString && isPowered) {
+                    if (block.getState() instanceof Dispenser dispenser) {
+                        Inventory inv = dispenser.getInventory();
+                        if (inv.firstEmpty() != -1) {
+                            inv.addItem(new ItemStack(Material.STRING));
+                            dispenser.update();
+                        }
                     }
                 }
             }
-        }.runTaskTimer(this, 0L, 10L); // 每0.5秒生成一个
+        }.runTaskTimer(this, 0L, 10L); // 每 0.5 秒更新一次
         runningTasks.put(block, task);
     }
 
