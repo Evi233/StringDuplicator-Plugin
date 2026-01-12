@@ -123,7 +123,6 @@ private void startMachine(Block block) {
                     return;
                 }
 
-                // 1. 环境检测
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
                 boolean hasString = (above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE);
@@ -131,51 +130,64 @@ private void startMachine(Block block) {
 
                 boolean success = false;
                 
-                // 只有在满足条件时才进入核心逻辑
                 if (hasString && isPowered) {
+                    // 获取最新的 BlockState 并强制转换为 Dispenser
                     if (block.getState() instanceof Dispenser dispenser) {
                         Inventory inv = dispenser.getInventory();
                         
-                        // --- 调试日志：获取刷线前的数量 ---
-                        int amountBefore = getAmount(inv, Material.STRING);
-                        
-                        // 执行刷线
-                        HashMap<Integer, ItemStack> remaining = inv.addItem(new ItemStack(Material.STRING));
-                        
-                        if (remaining.isEmpty()) {
-                            // 关键：强制同步状态到方块
-                            dispenser.update(true, false); 
+                        // 调试：看看这个容器到底有几个格子
+                        int invSize = inv.getSize();
+                        int beforeCount = countString(inv);
+
+                        // --- 强力注入逻辑开始 ---
+                        for (int i = 0; i < invSize; i++) {
+                            ItemStack item = inv.getItem(i);
                             
-                            // --- 调试日志：获取刷线后的数量 ---
-                            int amountAfter = getAmount(inv, Material.STRING);
-                            success = true;
+                            // 情况 A: 格子是空的
+                            if (item == null || item.getType() == Material.AIR) {
+                                inv.setItem(i, new ItemStack(Material.STRING, 1));
+                                success = true;
+                                break;
+                            } 
+                            // 情况 B: 格子已经是线，且没堆叠满
+                            else if (item.getType() == Material.STRING && item.getAmount() < 64) {
+                                item.setAmount(item.getAmount() + 1);
+                                success = true;
+                                break;
+                            }
+                        }
+
+                        if (success) {
+                            // 关键：提交修改，true 表示强制应用，false 表示不触发物理邻居更新
+                            dispenser.update(true, false);
                             
-                            // 在控制台输出结果
-                            getLogger().info(String.format("[DEBUG] 坐标 %d,%d,%d 刷线成功: %d -> %d", 
-                                block.getX(), block.getY(), block.getZ(), amountBefore, amountAfter));
+                            int afterCount = countString(inv);
+                            getLogger().info(String.format("[DEBUG] 坐标 %d,%d,%d | 类型: %s | 数量: %d -> %d", 
+                                block.getX(), block.getY(), block.getZ(), inv.getType(), beforeCount, afterCount));
                         } else {
-                            getLogger().warning("[DEBUG] 刷线失败：发射器已满！");
+                            // 如果循环结束 success 还是 false，说明 9 个格子全满了且全是 64 个
+                            // getLogger().warning("[DEBUG] 刷线失败：所有格子已满！");
                         }
                     }
                 }
 
-                // 2. 发送 Action Bar 诊断信息
+                // Action Bar 显示
                 String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
                 String pStr = isPowered ? "§a✔ 电力" : "§c✘ 没电";
                 String sStr = hasString ? "§a✔ 有线" : "§c✘ 没线";
-                String workStr = success ? "§b§l[+1 产出中]" : (isPowered && hasString ? "§6[容器满]" : "§8[待机]");
+                String workStr = success ? "§b§l[+1 产出中]" : (isPowered && hasString ? "§6[满/错误]" : "§8[待机]");
 
-                String message = workStr + " " + locStr + " " + pStr + " §8| " + sStr;
+                TextComponent msg = new TextComponent(workStr + " " + locStr + " " + pStr + " §8| " + sStr);
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(message));
+                    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, msg);
                 }
             }
 
-            // 辅助方法：计算背包中某种物品的总数
-            private int getAmount(Inventory inv, Material mat) {
+            // 修正后的计数方法
+            private int countString(Inventory inv) {
                 int count = 0;
                 for (ItemStack item : inv.getContents()) {
-                    if (item != null && item.getType() == mat) {
+                    if (item != null && item.getType() == Material.STRING) {
                         count += item.getAmount();
                     }
                 }
