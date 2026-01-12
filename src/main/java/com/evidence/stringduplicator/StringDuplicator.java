@@ -65,10 +65,15 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
 
     private void registerRecipe() {
         NamespacedKey recipeKey = new NamespacedKey(this, "string_duplicator_recipe");
+
+        // --- 新增：如果已存在同名合成表，先将其移除 ---
+        getServer().removeRecipe(recipeKey);
+
         ShapedRecipe recipe = new ShapedRecipe(recipeKey, machineItemCache);
         recipe.shape("SSS", "SDS", "SDS");
         recipe.setIngredient('S', Material.STONE);
         recipe.setIngredient('D', Material.OAK_DOOR);
+        
         getServer().addRecipe(recipe);
     }
 
