@@ -118,57 +118,68 @@ private void startMachine(Block block) {
         BukkitTask task = new BukkitRunnable() {
             @Override
             public void run() {
-                // 1. 基础检查
                 if (block.getType() != Material.DISPENSER) {
                     stopMachine(block);
                     return;
                 }
 
-                // 2. 环境检测 (确保检测的是 TRIPWIRE 方块形态)
+                // 1. 环境检测
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
                 boolean hasString = (above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE);
                 boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                // 3. 核心修复：直接操作库存
                 boolean success = false;
+                
+                // 只有在满足条件时才进入核心逻辑
                 if (hasString && isPowered) {
-                    // 强制获取当前的 TileState
-                    org.bukkit.block.BlockState state = block.getState();
-                    if (state instanceof Dispenser dispenser) {
+                    if (block.getState() instanceof Dispenser dispenser) {
                         Inventory inv = dispenser.getInventory();
                         
-                        // 直接添加物品
+                        // --- 调试日志：获取刷线前的数量 ---
+                        int amountBefore = getAmount(inv, Material.STRING);
+                        
+                        // 执行刷线
                         HashMap<Integer, ItemStack> remaining = inv.addItem(new ItemStack(Material.STRING));
                         
-                        // 如果没有剩余，说明成功存入
                         if (remaining.isEmpty()) {
-                            success = true;
-                            // 关键：在修改 Inventory 后，对于某些服务端版本，需要强制 update
-                            // 使用 dispenser.update(true, false) 强制同步数据且不触发物理更新
+                            // 关键：强制同步状态到方块
                             dispenser.update(true, false); 
+                            
+                            // --- 调试日志：获取刷线后的数量 ---
+                            int amountAfter = getAmount(inv, Material.STRING);
+                            success = true;
+                            
+                            // 在控制台输出结果
+                            getLogger().info(String.format("[DEBUG] 坐标 %d,%d,%d 刷线成功: %d -> %d", 
+                                block.getX(), block.getY(), block.getZ(), amountBefore, amountAfter));
+                        } else {
+                            getLogger().warning("[DEBUG] 刷线失败：发射器已满！");
                         }
                     }
                 }
 
-                // 4. 诊断信息
+                // 2. 发送 Action Bar 诊断信息
                 String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
-                String powerStatus = isPowered ? "§a✔ 电力" : "§c✘ 没电";
-                String stringStatus = hasString ? "§a✔ 有线" : "§c✘ 没线";
-                String workStatus = success ? "§b§l[正在生产...]" : (isPowered && hasString ? "§e[容器已满!]" : "§7[待机]");
+                String pStr = isPowered ? "§a✔ 电力" : "§c✘ 没电";
+                String sStr = hasString ? "§a✔ 有线" : "§c✘ 没线";
+                String workStr = success ? "§b§l[+1 产出中]" : (isPowered && hasString ? "§6[容器满]" : "§8[待机]");
 
-                String message = workStatus + " " + locStr + " " + powerStatus + " §8| " + stringStatus;
-
+                String message = workStr + " " + locStr + " " + pStr + " §8| " + sStr;
                 for (Player p : Bukkit.getOnlinePlayers()) {
                     p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(message));
-                    
-                    // 5. 增加视觉反馈：如果刷成功了，在方块位置播个粒子效果
-                    if (success && p.getLocation().distance(block.getLocation()) < 10) {
-                        // 产生一点白色烟雾粒子和声音，证明逻辑真的跑通了
-                        block.getWorld().spawnParticle(org.bukkit.Particle.HAPPY_VILLAGER, block.getLocation().add(0.5, 1.2, 0.5), 3);
-                        p.playSound(block.getLocation(), org.bukkit.Sound.ENTITY_CHICKEN_EGG, 0.5f, 2.0f);
+                }
+            }
+
+            // 辅助方法：计算背包中某种物品的总数
+            private int getAmount(Inventory inv, Material mat) {
+                int count = 0;
+                for (ItemStack item : inv.getContents()) {
+                    if (item != null && item.getType() == mat) {
+                        count += item.getAmount();
                     }
                 }
+                return count;
             }
         }.runTaskTimer(this, 0L, 10L);
         runningTasks.put(block, task);
