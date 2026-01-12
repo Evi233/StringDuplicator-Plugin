@@ -2,6 +2,7 @@ package com.evidence.stringduplicator;
 
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.block.Block;
@@ -31,6 +32,7 @@ import java.util.Map;
 public final class StringDuplicator extends JavaPlugin implements Listener {
 
     private final NamespacedKey MACHINE_KEY = new NamespacedKey(this, "is_string_duplicator");
+    private final NamespacedKey RECIPE_KEY = new NamespacedKey(this, "string_duplicator_recipe");
     private final Map<Block, BukkitTask> runningTasks = new HashMap<>();
     private ItemStack machineItemCache;
 
@@ -39,13 +41,17 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
         createMachineItem();
         registerRecipe();
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("String Duplicator (Action Bar Diagnostic) enabled!");
+        getLogger().info("String Duplicator (Global Broadcast) enabled!");
     }
 
     @Override
     public void onDisable() {
+        // 停止所有运行中的任务
         runningTasks.values().forEach(BukkitTask::cancel);
         runningTasks.clear();
+        
+        // 卸载合成表，防止热重载 (PlugManX) 报错
+        getServer().removeRecipe(RECIPE_KEY);
     }
 
     private void createMachineItem() {
@@ -64,16 +70,13 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
     }
 
     private void registerRecipe() {
-        NamespacedKey recipeKey = new NamespacedKey(this, "string_duplicator_recipe");
+        // 注册前先尝试移除旧的，确保热重载不报错
+        getServer().removeRecipe(RECIPE_KEY);
 
-        // --- 新增：如果已存在同名合成表，先将其移除 ---
-        getServer().removeRecipe(recipeKey);
-
-        ShapedRecipe recipe = new ShapedRecipe(recipeKey, machineItemCache);
+        ShapedRecipe recipe = new ShapedRecipe(RECIPE_KEY, machineItemCache);
         recipe.shape("SSS", "SDS", "SDS");
         recipe.setIngredient('S', Material.STONE);
         recipe.setIngredient('D', Material.OAK_DOOR);
-        
         getServer().addRecipe(recipe);
     }
 
@@ -87,9 +90,7 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
             if (block.getState() instanceof TileState state) {
                 state.getPersistentDataContainer().set(MACHINE_KEY, PersistentDataType.BYTE, (byte) 1);
                 state.update();
-                event.getPlayer().sendMessage("§a刷线机已放置！靠近机器可查看状态。");
-                
-                // 放置后即便没电也启动一个只显示诊断的任务
+                event.getPlayer().sendMessage("§a刷线机已放置！全服玩家均可看到诊断信息。");
                 startMachine(block);
             }
         }
@@ -107,7 +108,7 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
         if (!(block.getState() instanceof TileState state)) return;
         if (!state.getPersistentDataContainer().has(MACHINE_KEY, PersistentDataType.BYTE)) return;
 
-        // 红石信号改变时尝试触发任务启动
+        // 只要有红石更新就尝试维护任务
         startMachine(block);
     }
 
@@ -118,8 +119,7 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
             @Override
             public void run() {
                 if (block.getType() != Material.DISPENSER) {
-                    this.cancel();
-                    runningTasks.remove(block);
+                    stopMachine(block);
                     return;
                 }
 
@@ -129,20 +129,21 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
                 boolean hasString = above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE;
                 boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                // 2. 构造 Action Bar 诊断消息
-                String powerText = isPowered ? "§a✔ 已通电" : "§c✘ 未通电";
-                String stringText = hasString ? "§a✔ 已检测到线" : "§c✘ 未检测到线";
-                String status = isPowered && hasString ? "§b[运行中]" : "§7[待机中]";
-                String message = status + " " + powerText + " §8| " + stringText;
+                // 2. 构造诊断消息 (包含机器坐标，方便全服玩家定位)
+                String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
+                String powerText = isPowered ? "§a✔ 有电" : "§c✘ 没电";
+                String stringText = hasString ? "§a✔ 有线" : "§c✘ 没线";
+                String status = (isPowered && hasString) ? "§b[运行中]" : "§e[检查中]";
+                
+                String message = status + " " + locStr + " " + powerText + " §8| " + stringText;
 
-                // 3. 发送给周围 5 格内的玩家
-                for (Player player : block.getWorld().getPlayers()) {
-                    if (player.getLocation().distance(block.getLocation()) <= 5) {
-                        player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(message));
-                    }
+                // 3. 发送给服务器所有在线玩家
+                TextComponent component = new TextComponent(message);
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, component);
                 }
 
-                // 4. 只有在满足条件时才执行刷线逻辑
+                // 4. 执行刷线
                 if (hasString && isPowered) {
                     if (block.getState() instanceof Dispenser dispenser) {
                         Inventory inv = dispenser.getInventory();
@@ -153,7 +154,7 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(this, 0L, 10L); // 每 0.5 秒更新一次
+        }.runTaskTimer(this, 0L, 10L);
         runningTasks.put(block, task);
     }
 
