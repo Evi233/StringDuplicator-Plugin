@@ -118,55 +118,56 @@ private void startMachine(Block block) {
         BukkitTask task = new BukkitRunnable() {
             @Override
             public void run() {
+                // 1. 基础检查
                 if (block.getType() != Material.DISPENSER) {
                     stopMachine(block);
                     return;
                 }
 
-                // 1. 物理状态检测
+                // 2. 环境检测 (确保检测的是 TRIPWIRE 方块形态)
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
-                boolean hasString = above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE;
+                boolean hasString = (above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE);
                 boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                // 2. 检查库存状态
-                boolean isFull = false;
-                if (block.getState() instanceof Dispenser dispenser) {
-                    // 只有在满足刷线条件时才尝试添加，并判断是否成功
-                    if (hasString && isPowered) {
+                // 3. 核心修复：直接操作库存
+                boolean success = false;
+                if (hasString && isPowered) {
+                    // 强制获取当前的 TileState
+                    org.bukkit.block.BlockState state = block.getState();
+                    if (state instanceof Dispenser dispenser) {
                         Inventory inv = dispenser.getInventory();
-                        // 尝试放入 1 个线，addItem 会返回“没塞进去”的物品
+                        
+                        // 直接添加物品
                         HashMap<Integer, ItemStack> remaining = inv.addItem(new ItemStack(Material.STRING));
                         
+                        // 如果没有剩余，说明成功存入
                         if (remaining.isEmpty()) {
-                            dispenser.update(); // 成功放入，保存状态
-                        } else {
-                            isFull = true; // 没塞进去，说明满了
+                            success = true;
+                            // 关键：在修改 Inventory 后，对于某些服务端版本，需要强制 update
+                            // 使用 dispenser.update(true, false) 强制同步数据且不触发物理更新
+                            dispenser.update(true, false); 
                         }
                     }
                 }
 
-                // 3. 构造全服诊断消息
+                // 4. 诊断信息
                 String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
-                String powerText = isPowered ? "§a✔ 电力OK" : "§c✘ 没电";
-                String stringText = hasString ? "§a✔ 线上方OK" : "§c✘ 没线";
-                
-                // 根据不同状态显示不同的前缀
-                String status;
-                if (isFull) {
-                    status = "§6[容器已满]";
-                } else if (isPowered && hasString) {
-                    status = "§b[运行中]";
-                } else {
-                    status = "§e[检查中]";
-                }
-                
-                String message = status + " " + locStr + " " + powerText + " §8| " + stringText;
+                String powerStatus = isPowered ? "§a✔ 电力" : "§c✘ 没电";
+                String stringStatus = hasString ? "§a✔ 有线" : "§c✘ 没线";
+                String workStatus = success ? "§b§l[正在生产...]" : (isPowered && hasString ? "§e[容器已满!]" : "§7[待机]");
 
-                // 4. 发送给所有人
-                TextComponent component = new TextComponent(message);
+                String message = workStatus + " " + locStr + " " + powerStatus + " §8| " + stringStatus;
+
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, component);
+                    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(message));
+                    
+                    // 5. 增加视觉反馈：如果刷成功了，在方块位置播个粒子效果
+                    if (success && p.getLocation().distance(block.getLocation()) < 10) {
+                        // 产生一点白色烟雾粒子和声音，证明逻辑真的跑通了
+                        block.getWorld().spawnParticle(org.bukkit.Particle.HAPPY_VILLAGER, block.getLocation().add(0.5, 1.2, 0.5), 3);
+                        p.playSound(block.getLocation(), org.bukkit.Sound.ENTITY_CHICKEN_EGG, 0.5f, 2.0f);
+                    }
                 }
             }
         }.runTaskTimer(this, 0L, 10L);
