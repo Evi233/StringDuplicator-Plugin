@@ -123,33 +123,40 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
                     return;
                 }
 
-                // 1. 物理状态检测
+                // 1. 状态检测
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
+                // 修正：检测 TRIPWIRE（线方块）
                 boolean hasString = above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE;
                 boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                // 2. 构造诊断消息 (包含机器坐标，方便全服玩家定位)
+                // 2. 诊断信息显示
                 String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
                 String powerText = isPowered ? "§a✔ 有电" : "§c✘ 没电";
                 String stringText = hasString ? "§a✔ 有线" : "§c✘ 没线";
                 String status = (isPowered && hasString) ? "§b[运行中]" : "§e[检查中]";
-                
                 String message = status + " " + locStr + " " + powerText + " §8| " + stringText;
 
-                // 3. 发送给服务器所有在线玩家
-                TextComponent component = new TextComponent(message);
                 for (Player player : Bukkit.getOnlinePlayers()) {
-                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, component);
+                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(message));
                 }
 
-                // 4. 执行刷线
+                // 3. 核心修复：执行刷线
                 if (hasString && isPowered) {
+                    // 获取最新的方块状态
                     if (block.getState() instanceof Dispenser dispenser) {
                         Inventory inv = dispenser.getInventory();
-                        if (inv.firstEmpty() != -1) {
-                            inv.addItem(new ItemStack(Material.STRING));
-                            dispenser.update();
+                        
+                        // 尝试放入 1 个线，addItem 会自动处理堆叠（只要有格子没到 64 个就能放进去）
+                        // 我们移除掉 if (inv.firstEmpty() != -1) 这个限制
+                        HashMap<Integer, ItemStack> remaining = inv.addItem(new ItemStack(Material.STRING));
+                        
+                        // 如果 remaining 不为空，说明真的全满了（连堆叠的空间都没了）
+                        if (remaining.isEmpty()) {
+                            dispenser.update(); // 确认保存状态
+                        } else {
+                            // 可选：如果满了，可以发个警告
+                            player.sendMessage("§c警告：刷线机已满！");
                         }
                     }
                 }
