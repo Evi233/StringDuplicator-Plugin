@@ -112,7 +112,7 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
         startMachine(block);
     }
 
-    private void startMachine(Block block) {
+private void startMachine(Block block) {
         if (runningTasks.containsKey(block)) return;
 
         BukkitTask task = new BukkitRunnable() {
@@ -123,42 +123,50 @@ public final class StringDuplicator extends JavaPlugin implements Listener {
                     return;
                 }
 
-                // 1. 状态检测
+                // 1. 物理状态检测
                 Block above1 = block.getRelative(BlockFace.UP);
                 Block above2 = above1.getRelative(BlockFace.UP);
-                // 修正：检测 TRIPWIRE（线方块）
                 boolean hasString = above1.getType() == Material.TRIPWIRE || above2.getType() == Material.TRIPWIRE;
                 boolean isPowered = block.isBlockPowered() || block.isBlockIndirectlyPowered();
 
-                // 2. 诊断信息显示
-                String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
-                String powerText = isPowered ? "§a✔ 有电" : "§c✘ 没电";
-                String stringText = hasString ? "§a✔ 有线" : "§c✘ 没线";
-                String status = (isPowered && hasString) ? "§b[运行中]" : "§e[检查中]";
-                String message = status + " " + locStr + " " + powerText + " §8| " + stringText;
-
-                for (Player player : Bukkit.getOnlinePlayers()) {
-                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(message));
-                }
-
-                // 3. 核心修复：执行刷线
-                if (hasString && isPowered) {
-                    // 获取最新的方块状态
-                    if (block.getState() instanceof Dispenser dispenser) {
+                // 2. 检查库存状态
+                boolean isFull = false;
+                if (block.getState() instanceof Dispenser dispenser) {
+                    // 只有在满足刷线条件时才尝试添加，并判断是否成功
+                    if (hasString && isPowered) {
                         Inventory inv = dispenser.getInventory();
-                        
-                        // 尝试放入 1 个线，addItem 会自动处理堆叠（只要有格子没到 64 个就能放进去）
-                        // 我们移除掉 if (inv.firstEmpty() != -1) 这个限制
+                        // 尝试放入 1 个线，addItem 会返回“没塞进去”的物品
                         HashMap<Integer, ItemStack> remaining = inv.addItem(new ItemStack(Material.STRING));
                         
-                        // 如果 remaining 不为空，说明真的全满了（连堆叠的空间都没了）
                         if (remaining.isEmpty()) {
-                            dispenser.update(); // 确认保存状态
+                            dispenser.update(); // 成功放入，保存状态
                         } else {
-                            // 可选：如果满了，可以发个警告
-                            player.sendMessage("§c警告：刷线机已满！");
+                            isFull = true; // 没塞进去，说明满了
                         }
                     }
+                }
+
+                // 3. 构造全服诊断消息
+                String locStr = String.format("§7[%d, %d, %d]", block.getX(), block.getY(), block.getZ());
+                String powerText = isPowered ? "§a✔ 电力OK" : "§c✘ 没电";
+                String stringText = hasString ? "§a✔ 线上方OK" : "§c✘ 没线";
+                
+                // 根据不同状态显示不同的前缀
+                String status;
+                if (isFull) {
+                    status = "§6[容器已满]";
+                } else if (isPowered && hasString) {
+                    status = "§b[运行中]";
+                } else {
+                    status = "§e[检查中]";
+                }
+                
+                String message = status + " " + locStr + " " + powerText + " §8| " + stringText;
+
+                // 4. 发送给所有人
+                TextComponent component = new TextComponent(message);
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, component);
                 }
             }
         }.runTaskTimer(this, 0L, 10L);
